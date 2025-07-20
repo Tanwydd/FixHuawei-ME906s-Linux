@@ -55,7 +55,6 @@ Puedes encontrarla buscando "Terminal" en el menú de aplicaciones de Debian. Es
     (Y pulsa Enter)
 
 * Ejecuta el script: ¡Este es el paso principal!
-Bash
     ```
     sudo ./fix_huawei_modem.sh
     ```
