@@ -70,7 +70,7 @@ Don’t worry if you’re not a tech expert! Just follow these simple steps:
 
   + You’ll see messages explaining what the script is doing at each step.
 
-  + At the end, the script will ask if you want to reboot your computer. It's very important to answer `y` (for yes) and press Enter to reboot the system.
+  + At the end, the script will ask if you want to reboot your computer. It's very important to answer `s` (for yes) and press Enter to reboot the system.
 
 ---
 
