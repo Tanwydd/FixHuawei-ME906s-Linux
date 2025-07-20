@@ -1,4 +1,4 @@
-Solución para Módem Huawei ME906s en Debian 12
+# Solución para Módem Huawei ME906s en Debian 12
 
 Este paquete contiene un script diseñado para ayudarte a hacer funcionar tu módem 4G/LTE interno Huawei ME906s en tu portátil Lenovo ThinkPad T560 con Debian 12 de forma consistente en cada arranque.
 
