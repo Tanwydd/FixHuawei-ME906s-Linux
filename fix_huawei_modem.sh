@@ -1,100 +1,243 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# =============================================================================
+# huawei-me906s-setup.sh — Configura el módem Huawei ME906s LTE M.2 en Debian 12
+# Driver: cdc_mbim (MBIM protocol)
+# Uso: sudo ./huawei-me906s-setup.sh [-v] [-n] [-p PIN] [-h]
+# =============================================================================
 
-# Este script automatiza la configuración consistente del modem Huawei ME906s LTE M.2 Module en Debian 12.
-# Soluciona problemas de inicialización forzando el uso del driver qmi_wwan/cdc_mbim de forma fiable.
+set -euo pipefail
 
-# --- Función para mostrar mensajes de estado ---
-log_message() {
-    echo "--- $1 ---"
+# ── Constantes ────────────────────────────────────────────────────────────────
+readonly SCRIPT_NAME="$(basename "$0")"
+readonly VENDOR_ID="12d1"
+readonly PRODUCT_ID="15c1"
+readonly MODPROBE_CONF="/etc/modprobe.d/huawei-me906s.conf"
+readonly UDEV_RULES="/etc/udev/rules.d/99-huawei-me906s.rules"
+readonly PACKAGES=(usb-modeswitch modemmanager network-manager-gnome libmbim-utils)
+VERBOSE=0
+NO_REBOOT=0
+SIM_PIN=""
+
+# ── Colores ───────────────────────────────────────────────────────────────────
+if [[ -t 1 ]] && command -v tput &>/dev/null; then
+  RED=$(tput setaf 1); GREEN=$(tput setaf 2)
+  YELLOW=$(tput setaf 3); CYAN=$(tput setaf 6); RESET=$(tput sgr0)
+else
+  RED=""; GREEN=""; YELLOW=""; CYAN=""; RESET=""
+fi
+
+# ── Funciones de log ──────────────────────────────────────────────────────────
+log_step()    { echo; echo "${CYAN}══ $* ══${RESET}"; }
+log_info()    { echo "${GREEN}[OK]${RESET}    $*"; }
+log_warn()    { echo "${YELLOW}[AVISO]${RESET} $*" >&2; }
+log_error()   { echo "${RED}[ERROR]${RESET} $*" >&2; }
+log_verbose() { [[ $VERBOSE -eq 1 ]] && echo "        $*" || true; }
+
+# ── Ayuda ─────────────────────────────────────────────────────────────────────
+usage() {
+  cat <<EOF
+Uso: sudo $SCRIPT_NAME [opciones]
+
+Configura el módem Huawei ME906s (${VENDOR_ID}:${PRODUCT_ID}) en Debian 12
+usando el driver cdc_mbim (protocolo MBIM).
+
+Opciones:
+  -v        Modo verbose
+  -n        No preguntar sobre reinicio al finalizar
+  -p PIN    PIN de la SIM (se guarda en el perfil de NetworkManager)
+  -h        Muestra esta ayuda
+
+Archivos generados:
+  $MODPROBE_CONF
+  $UDEV_RULES
+EOF
+  exit 0
 }
 
-# --- 1. Instalar herramientas esenciales ---
-log_message "1. Actualizando lista de paquetes e instalando herramientas necesarias..."
-sudo apt update
-if [ $? -ne 0 ]; then
-    echo "ERROR: Falló la actualización de paquetes. Revisa tu conexión a internet o los repositorios."
+# ── Verificaciones ────────────────────────────────────────────────────────────
+check_root() {
+  if [[ $EUID -ne 0 ]]; then
+    log_error "Este script debe ejecutarse como root: sudo $SCRIPT_NAME"
     exit 1
-fi
-# usb-modeswitch se mantiene por si acaso, aunque la solución principal ahora es via modprobe.d
-# modemmanager y network-manager-gnome son esenciales para la gestión del modem
-sudo apt install -y usb-modeswitch modemmanager network-manager-gnome
-if [ $? -ne 0 ]; then
-    echo "ERROR: Falló la instalación de paquetes. Asegúrate de tener permisos sudo."
+  fi
+}
+
+check_debian() {
+  if [[ ! -f /etc/debian_version ]]; then
+    log_warn "Este script está diseñado para Debian/Ubuntu."
+  fi
+}
+
+run() {
+  if [[ $VERBOSE -eq 1 ]]; then
+    "$@"
+  else
+    "$@" &>/dev/null
+  fi
+}
+
+# ── Paso 1: Instalar paquetes ─────────────────────────────────────────────────
+install_packages() {
+  log_step "1/4  Instalando herramientas necesarias"
+
+  if ! run apt-get update; then
+    log_error "Falló apt update."
     exit 1
-fi
-log_message "Herramientas instaladas/actualizadas correctamente."
+  fi
 
-# --- 2. Configurar módulos del kernel para el Huawei ME906s ---
-log_message "2. Configurando módulos del kernel para el módem Huawei ME906s (12d1:15c1)..."
+  if ! run apt-get install -y "${PACKAGES[@]}"; then
+    log_error "Falló la instalación de paquetes."
+    exit 1
+  fi
 
-# Contenido del archivo modprobe.d
-MODPROBE_CONF_CONTENT='
-# Opciones para el modem Huawei ME906s (ID: 12d1:15c1)
-# Ignorar por usb-storage para evitar conflictos
-options usb-storage quirks=12d1:15c1:i
+  log_info "Paquetes instalados: ${PACKAGES[*]}"
+}
 
-# Indicar explícitamente a qmi_wwan que maneje este ID de dispositivo USB.
-# Esta es la directiva clave para la solución consistente.
-options qmi_wwan quirks=12d1:15c1
+# ── Paso 2: Configurar modprobe.d ─────────────────────────────────────────────
+configure_modprobe() {
+  log_step "2/4  Configurando módulos del kernel (${VENDOR_ID}:${PRODUCT_ID})"
 
-# Poner en lista negra a cdc_ether para evitar conflictos de drivers
+  cat > "$MODPROBE_CONF" <<EOF
+# Huawei ME906s (${VENDOR_ID}:${PRODUCT_ID}) — generado por $SCRIPT_NAME
+# Driver: cdc_mbim (protocolo MBIM)
+
+# Evitar que usb-storage reclame el dispositivo
+options usb-storage quirks=${VENDOR_ID}:${PRODUCT_ID}:i
+
+# Bloquear drivers conflictivos
+# NOTA: cdc_mbim NO debe estar en blacklist — es el driver correcto
 blacklist cdc_ether
-'
+EOF
 
-echo "$MODPROBE_CONF_CONTENT" | sudo tee /etc/modprobe.d/huawei-me906s.conf > /dev/null
-if [ $? -ne 0 ]; then
-    echo "ERROR: Falló la creación del archivo modprobe.d. Revisa los permisos."
+  if ! run update-initramfs -u; then
+    log_error "Falló update-initramfs."
     exit 1
-fi
-log_message "Archivo /etc/modprobe.d/huawei-me906s.conf creado/actualizado correctamente."
+  fi
 
-# --- 3. Actualizar initramfs ---
-log_message "3. Actualizando initramfs para aplicar cambios en los módulos del kernel..."
-sudo update-initramfs -u
-if [ $? -ne 0 ]; then
-    echo "ERROR: Falló la actualización de initramfs. Revisa el log para más detalles."
-    exit 1
-fi
-log_message "Initramfs actualizado."
+  log_info "modprobe.d configurado → $MODPROBE_CONF"
+  log_info "initramfs actualizado"
+}
 
-# --- 4. Recargar reglas udev y reiniciar servicios de red y módem ---
-log_message "4. Recargando reglas udev y reiniciando servicios ModemManager y NetworkManager..."
+# ── Paso 3: Configurar udev ───────────────────────────────────────────────────
+configure_udev() {
+  log_step "3/4  Configurando reglas udev y reiniciando servicios"
 
-# La regla udev se mantiene, aunque la configuración de modprobe.d es la principal.
-# Esta regla asegura que ModemManager procese el dispositivo.
-UDU_RULE_CONTENT='
-# Huawei ME906s LTE M.2 Module (Vendor=12d1 ProdID=15c1)
-# Asegura que ModemManager procese este dispositivo.
-ATTRS{idVendor}=="12d1", ATTRS{idProduct}=="15c1", ENV{ID_MM_DEVICE_PROCESS}="1", MODE:="0666"
+  cat > "$UDEV_RULES" <<EOF
+# Huawei ME906s (${VENDOR_ID}:${PRODUCT_ID}) — generado por $SCRIPT_NAME
 
-# usb_modeswitch como fallback, aunque con la solucion del modprobe.d no deberia ser necesario.
-ATTRS{idVendor}=="12d1", ATTRS{idProduct}=="15c1", RUN+="/usr/sbin/usb_modeswitch -v 0x12d1 -p 0x15c1 --huawei-new-mode"
-'
-echo "$UDU_RULE_CONTENT" | sudo tee /etc/udev/rules.d/99-huawei-me906s.rules > /dev/null
-if [ $? -ne 0 ]; then
-    echo "ERROR: Falló la creación de la regla udev. Revisa los permisos."
-    exit 1
-fi
-log_message "Regla udev creada/actualizada correctamente."
+# Asegurar que ModemManager procese el dispositivo en modo MBIM
+ATTRS{idVendor}=="${VENDOR_ID}", ATTRS{idProduct}=="${PRODUCT_ID}", \
+  ENV{ID_MM_DEVICE_PROCESS}="1"
+ATTRS{idVendor}=="${VENDOR_ID}", ATTRS{idProduct}=="${PRODUCT_ID}", \
+  ENV{ID_MM_TTY_BLACKLIST}="1"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="${VENDOR_ID}", ATTRS{idProduct}=="${PRODUCT_ID}", \
+  ENV{ID_MM_HUAWEI_USE_MBIM}="1"
+EOF
 
+  run udevadm control --reload-rules
+  run udevadm trigger
 
-sudo udevadm control --reload-rules
-sudo udevadm trigger
-sudo systemctl restart ModemManager.service NetworkManager.service
-log_message "Reglas udev recargadas y servicios reiniciados."
+  if ! run systemctl restart ModemManager.service NetworkManager.service; then
+    log_warn "Algún servicio no se reinició correctamente."
+  fi
 
-# --- 5. Paso final: Reinicio del sistema ---
-log_message "¡SCRIPT COMPLETADO!"
-echo "****************************************************************"
-echo "** Para que los cambios en el kernel surtan efecto completo   **"
-echo "** y el módem Huawei ME906s sea detectado correctamente       **"
-echo "** en cada arranque, es NECESARIO REINICIAR EL SISTEMA AHORA. **"
-echo "****************************************************************"
-echo ""
-read -p "¿Deseas reiniciar ahora? (s/n): " confirm_reboot
-if [[ "$confirm_reboot" =~ ^[Ss]$ ]]; then
-    log_message "Reiniciando el sistema..."
-    sudo reboot
-else
-    echo "Por favor, recuerda reiniciar tu sistema manualmente lo antes posible para aplicar los cambios."
-fi
+  log_info "Reglas udev → $UDEV_RULES"
+  log_info "Servicios reiniciados"
+
+  # Esperar a que ModemManager inicialice el módem
+  log_verbose "Esperando inicialización del módem (30s)..."
+  local retries=12
+  while [[ $retries -gt 0 ]]; do
+    if mmcli -L 2>/dev/null | grep -q "Modem"; then
+      log_info "Módem detectado por ModemManager"
+      break
+    fi
+    sleep 5
+    ((retries--))
+  done
+
+  if [[ $retries -eq 0 ]]; then
+    log_warn "ModemManager no detectó el módem en 60s. Puede que necesite reiniciar."
+  fi
+}
+
+# ── Paso 4: Configurar perfil NetworkManager ──────────────────────────────────
+configure_nm_profile() {
+  log_step "4/5  Configurando perfil de conexión en NetworkManager"
+
+  # Buscar perfil gsm existente
+  local profile
+  profile=$(nmcli -t -f NAME,TYPE connection show | grep ":gsm" | cut -d: -f1 | head -1)
+
+  if [[ -z "$profile" ]]; then
+    log_warn "No se encontró perfil GSM en NetworkManager."
+    log_warn "Crea la conexión manualmente desde el gestor de red."
+    return 0
+  fi
+
+  log_info "Perfil GSM encontrado: $profile"
+
+  # Asegurar autoconexión
+  nmcli connection modify "$profile" connection.autoconnect yes
+  nmcli connection modify "$profile" connection.autoconnect-priority 0
+  log_info "Autoconexión activada en perfil '$profile'"
+
+  # Guardar PIN si se proporcionó
+  if [[ -n "$SIM_PIN" ]]; then
+    nmcli connection modify "$profile" gsm.pin "$SIM_PIN"
+    nmcli connection modify "$profile" gsm.pin-flags 0
+    log_info "PIN guardado en perfil '$profile'"
+  fi
+}
+
+# ── Paso 5: Reinicio ──────────────────────────────────────────────────────────
+prompt_reboot() {
+  log_step "5/5  Reinicio del sistema"
+
+  echo
+  echo "  Los cambios en el kernel requieren un reinicio completo."
+  echo "  El módem tardará ~30s en conectarse tras el arranque."
+  echo
+
+  if [[ $NO_REBOOT -eq 1 ]]; then
+    log_warn "Reinicio omitido (-n). Recuerda reiniciar manualmente."
+    return
+  fi
+
+  local confirm
+  read -r -p "  ¿Reiniciar ahora? [s/N]: " confirm
+  if [[ "${confirm,,}" =~ ^s$ ]]; then
+    log_info "Reiniciando..."
+    reboot
+  else
+    log_warn "Recuerda reiniciar manualmente para aplicar los cambios del kernel."
+  fi
+}
+
+# ── Punto de entrada ──────────────────────────────────────────────────────────
+main() {
+  while getopts ":vnp:h" opt; do
+    case $opt in
+      v) VERBOSE=1 ;;
+      n) NO_REBOOT=1 ;;
+      p) SIM_PIN="$OPTARG" ;;
+      h) usage ;;
+      *) log_error "Opción desconocida: -$OPTARG"; exit 1 ;;
+    esac
+  done
+
+  check_root
+  check_debian
+
+  install_packages
+  configure_modprobe
+  configure_udev
+  configure_nm_profile
+  prompt_reboot
+
+  echo
+  log_info "Configuración completada para Huawei ME906s (${VENDOR_ID}:${PRODUCT_ID})"
+  log_info "Driver: cdc_mbim | Protocolo: MBIM | Operador: detectado automáticamente"
+}
+
+main "$@"
