@@ -31,7 +31,7 @@ Typical symptoms:
 
 ## Scripts
 
-### `huawei-me906s-setup.sh`
+### `fix_huawei_modem.sh`
 
 Full initial setup of the modem. Run **once** after installing Debian or reinstalling the system.
 
