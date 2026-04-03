@@ -14,6 +14,7 @@ Typical symptoms:
 - The modem appears in `lsusb` but with no driver assigned (`Driver=`)
 - NetworkManager shows the modem as unavailable
 - The connection is not established automatically at boot
+- ModemManager logs show: `could not grab port cdc-wdm1: unhandled port type`
 
 ---
 
@@ -40,7 +41,7 @@ Full initial setup of the modem. Run **once** after installing Debian or reinsta
 1. Installs `modemmanager`, `libmbim-utils`, `usb-modeswitch` and `network-manager-gnome`
 2. Creates `/etc/modprobe.d/huawei-me906s.conf` — assigns `cdc_mbim` and blacklists conflicting drivers
 3. Updates `initramfs` so changes persist from boot
-4. Creates `/etc/udev/rules.d/99-huawei-me906s.rules` — forces MBIM mode in ModemManager
+4. Creates `/etc/udev/rules.d/99-huawei-me906s.rules` — forces MBIM mode in ModemManager via `ID_MM_HUAWEI_USE_MBIM`
 5. Actively waits for ModemManager to detect the modem (up to 60s)
 6. Configures the GSM profile in NetworkManager with `autoconnect: yes`
 7. Saves the SIM PIN if provided (avoids the PIN dialog on every boot)
@@ -56,10 +57,10 @@ sudo ./huawei-me906s-setup.sh
 # With SIM PIN (recommended — avoids PIN dialogs at boot)
 sudo ./huawei-me906s-setup.sh -p 1234
 
-# Verbose mode (shows output of all commands)
+# Verbose mode
 sudo ./huawei-me906s-setup.sh -v -p 1234
 
-# Skip reboot prompt (useful for automation scripts)
+# Skip reboot prompt (useful for automation)
 sudo ./huawei-me906s-setup.sh -n -p 1234
 ```
 
@@ -76,7 +77,15 @@ sudo ./huawei-me906s-setup.sh -n -p 1234
 
 ### `reiniciar_modem.sh`
 
-Restarts the `ModemManager` and `NetworkManager` services. Useful when the modem loses its connection without needing to reboot the system.
+Wakes up the modem when ModemManager fails to detect it after boot or the modem becomes unresponsive. This is the script to run when `mmcli -L` returns `No modems were found` despite the modem being visible in `lsusb`.
+
+**What it does:**
+
+1. Checks the modem is visible at hardware level via `lsusb`
+2. Reloads udev rules and triggers USB subsystem (fixes the `unhandled port type` issue)
+3. Restarts ModemManager and waits up to 60s for modem detection
+4. Restarts NetworkManager
+5. Verifies the final connection state
 
 **Usage:**
 
@@ -86,7 +95,7 @@ sudo chmod +x reiniciar_modem.sh
 # Basic usage
 sudo ./reiniciar_modem.sh
 
-# Verbose mode
+# Verbose mode (shows waiting progress)
 sudo ./reiniciar_modem.sh -v
 ```
 
@@ -115,12 +124,38 @@ Once `huawei-me906s-setup.sh` has been run and the system rebooted, the automati
 ```
 Kernel starts
     └─ cdc_mbim loads → /dev/cdc-wdm1 available
-         └─ ModemManager detects modem via udev (~20s)
-              └─ NetworkManager reads profile (autoconnect: yes)
-                   └─ Sends PIN → registers on network → connection established (~30-40s)
+         └─ udev applies ID_MM_HUAWEI_USE_MBIM rule
+              └─ ModemManager detects modem (~20s)
+                   └─ NetworkManager reads profile (autoconnect: yes)
+                        └─ Sends PIN → registers on network → connected (~30-40s)
 ```
 
 No manual intervention required. The connection will be available approximately 30-40 seconds after boot.
+
+If the modem is not detected after ~60s, run `sudo ./reiniciar_modem.sh`.
+
+---
+
+## Key configuration files
+
+### `/etc/modprobe.d/huawei-me906s.conf`
+
+```
+# Huawei ME906s (12d1:15c1) — driver cdc_mbim
+
+options usb-storage quirks=12d1:15c1:i
+blacklist cdc_ether
+```
+
+### `/etc/udev/rules.d/99-huawei-me906s.rules`
+
+```
+# Huawei ME906s (12d1:15c1) — force MBIM mode in ModemManager
+
+ATTRS{idVendor}=="12d1", ATTRS{idProduct}=="15c1", ENV{ID_MM_DEVICE_PROCESS}="1"
+ATTRS{idVendor}=="12d1", ATTRS{idProduct}=="15c1", ENV{ID_MM_TTY_BLACKLIST}="1"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="12d1", ATTRS{idProduct}=="15c1", ENV{ID_MM_HUAWEI_USE_MBIM}="1"
+```
 
 ---
 
@@ -147,6 +182,8 @@ mbimcli -d /dev/cdc-wdm1 --query-device-caps
 # ModemManager logs
 sudo journalctl -u ModemManager -n 50 --no-pager
 ```
+
+**Most common issue:** ModemManager logs show `could not grab port cdc-wdm1: unhandled port type`. Fix: verify that `/etc/udev/rules.d/99-huawei-me906s.rules` contains the `ID_MM_HUAWEI_USE_MBIM` line, then run `sudo ./reiniciar_modem.sh`.
 
 ---
 
