@@ -1,93 +1,168 @@
-# Solución para Módem Huawei ME906s en Debian 12
+# Huawei ME906s LTE M.2 — Configuración en Debian 12
 
-Este paquete contiene un script diseñado para ayudarte a hacer funcionar tu módem 4G/LTE interno Huawei ME906s en tu portátil Lenovo ThinkPad T560 con Debian 12 de forma consistente en cada arranque.
-
-
-# ¿Qué hace este script? 🤔
-
-Tu módem Huawei ME906s es un componente interno que, al encender tu portátil, a veces no se "activa" correctamente como un módem de internet. Aunque se detecta, puede que el sistema no le asigne el controlador (driver) adecuado de inmediato, impidiendo su funcionamiento.
-
-Este script es una solución automatizada que realiza varios pasos clave para asegurar que tu sistema Debian 12 reconozca y use tu módem de forma fiable:
-
-* Instala herramientas esenciales: Se asegura de que tengas los programas necesarios (como ModemManager, usb-modeswitch y NetworkManager-gnome) que Debian usa para gestionar módems y conexiones móviles.
-
-* Configura los módulos del kernel: Este es el paso más importante. Modifica directamente la forma en que el kernel de Linux maneja tu módem. Le indica que use el driver cdc_mbim (o qmi_wwan) desde el inicio del sistema y que ignore otros drivers conflictivos como cdc_ether o usb-storage que pueden interferir con la correcta inicialización del módem.
-
-* Actualiza el sistema de arranque (initramfs): Para que los cambios en la configuración de los módulos del kernel sean efectivos, el script actualiza el "mini-sistema" que arranca antes del sistema operativo completo.
-
-* Recarga reglas y reinicia servicios clave: Vuelve a cargar las reglas de detección de hardware (udev) y reinicia los servicios de red (ModemManager, NetworkManager) para aplicar los cambios en la sesión actual.
-
-* Te pide reiniciar: ¡Este es el paso final y fundamental! Después de todas las configuraciones, reiniciar el portátil es crucial para que los cambios en el kernel se apliquen desde cero y el módem se active correctamente en cada inicio.
-
-
-# ¿Por qué necesito esto? 🧐
-
-Algunos módems internos Huawei (como el ME906s que tienes en tu ThinkPad) tienen un comportamiento particular al arrancar. Aunque el sistema los detecta (con ID 12d1:15c1), a veces no se les asigna el controlador de red móvil correcto (cdc_mbim o qmi_wwan) y, en su lugar, se cargan otros drivers que no permiten su funcionamiento como módem 4G/LTE, o incluso se desregistran poco después.
-
-Este script soluciona ese problema forzando al kernel a utilizar el driver adecuado desde el inicio del sistema, garantizando así que el módem esté listo para usarse para tu conexión a internet cada vez que enciendas tu portátil.
-
-
-# ¿Cómo usar el script? (Paso a Paso) 🚶‍♂️🚶‍♀️
-
-¡No te preocupes si no eres un experto en tecnología! Solo tienes que seguir estos sencillos pasos:
-
-* Descarga el script: Guarda el archivo configurar_modem_huawei.sh (o el nombre que le hayas dado) en tu ordenador. Puedes ponerlo en tu carpeta personal (/home/tu_usuario).
-
-* Abre una Terminal:
-Puedes encontrarla buscando "Terminal" en el menú de aplicaciones de Debian. Es una ventana donde puedes escribir comandos.
-
-* Ve a la carpeta donde guardaste el script:
-
-+ Si lo guardaste en tu carpeta personal, solo escribe:
-    ```
-    cd ~
-    ```
-+ Si lo guardaste en otra carpeta (por ejemplo, Descargas), escribe:
-    ```
-    cd Descargas
-    ```
-    (Y pulsa Enter)
-
-* Haz que el script sea "ejecutable": Esto le da permiso al sistema para que pueda ejecutar el archivo.
-    ```
-    chmod +x fix_huawei_modem.sh
-    ```
-    (Y pulsa Enter)
-
-* Ejecuta el script: ¡Este es el paso principal!
-    ```
-    sudo ./fix_huawei_modem.sh
-    ```
-    (Y pulsa Enter)
-
-* Sigue las instrucciones en la Terminal:
-
-    + El script te pedirá tu contraseña de usuario (la que usas para iniciar sesión) en algún momento. Esto es normal, ya que necesita permisos especiales para instalar programas y cambiar configuraciones.
-
-    + Verás mensajes que te informan lo que está haciendo el script en cada paso.
-
-    + Al final, el script te preguntará si quieres reiniciar tu ordenador. Es muy importante que respondas s (para sí) y pulses Enter para que el sistema se reinicie.
-
-
-# ¡Después del Reinicio! 🎉
-
-Una vez que tu portátil se haya reiniciado y hayas iniciado sesión, tu módem Huawei ME906s debería estar funcionando correctamente de forma automática. Podrás configurar tu conexión móvil a través de la configuración de red de tu sistema (generalmente accesible desde el icono de red en la barra de tareas) y conectarte a internet usando tu tarjeta SIM.
-
-Recuerda: Necesitarás la APN (Access Point Name) de tu operador de telefonía móvil para configurar la conexión por primera vez. Si no la conoces, búscala en la web de tu operador o en tu contrato.
-
-Si tienes algún problema, puedes volver a ejecutar el script o consultar a alguien con más experiencia en Debian.
-
-
-# Disclaimer
-
-Este script ha sido creado para ayudar a resolver un problema específico con el módem Huawei ME906s en Debian 12, basado en experiencias de usuario y soluciones comunes.
+Scripts para configurar y gestionar el módem **Huawei ME906s** (ID USB `12d1:15c1`) en Debian 12 (Bookworm), resolviendo los problemas de detección automática mediante el driver `cdc_mbim` y el protocolo MBIM.
 
 ---
 
-**Úsalo bajo tu propia responsabilidad:** Aunque este script está diseñado para ser seguro, cualquier acción que realices en tu sistema operativo, incluyendo la ejecución de scripts con sudo (permisos de administrador), conlleva ciertos riesgos ¡Usa la cabeza!
+## Contexto del problema
 
-**No hay garantías:** No se ofrece ninguna garantía de que este script funcione en todas las configuraciones posibles o que resuelva todos los problemas relacionados con tu módem. Los entornos de software y hardware pueden variar.
+El módem Huawei ME906s puede no ser detectado correctamente al arrancar porque el kernel de Linux compite entre varios drivers (`cdc_mbim`, `cdc_ether`, `usb-storage`) sin saber cuál usar. Además, ModemManager necesita ser informado explícitamente de que este dispositivo debe gestionarse en modo MBIM.
 
-**Copia de seguridad:** Siempre es una buena práctica realizar una copia de seguridad de tus datos importantes antes de realizar cambios significativos en la configuración de tu sistema.
+Los síntomas típicos son:
 
-**Soporte:** Este script se proporciona "tal cual" y sin soporte técnico formal. Si encuentras problemas persistentes, se recomienda buscar ayuda en los foros de la comunidad de Debian o consultar con un profesional.
+- `mmcli -L` devuelve `No modems were found`
+- El módem aparece en `lsusb` pero sin driver asignado (`Driver=`)
+- NetworkManager muestra el módem como no disponible
+- La conexión no se establece automáticamente al arrancar
+
+---
+
+## Solución implementada
+
+| Componente | Configuración |
+|---|---|
+| Driver kernel | `cdc_mbim` |
+| Protocolo | MBIM |
+| Gestión | ModemManager + NetworkManager |
+| Archivo modprobe | `/etc/modprobe.d/huawei-me906s.conf` |
+| Regla udev | `/etc/udev/rules.d/99-huawei-me906s.rules` |
+
+---
+
+## Scripts
+
+### `huawei-me906s-setup.sh`
+
+Configuración inicial completa del módem. Ejecutar **una sola vez** tras instalar Debian o si se reinstala el sistema.
+
+**Qué hace:**
+
+1. Instala `modemmanager`, `libmbim-utils`, `usb-modeswitch` y `network-manager-gnome`
+2. Crea `/etc/modprobe.d/huawei-me906s.conf` — asigna `cdc_mbim` y bloquea drivers conflictivos
+3. Actualiza `initramfs` para que los cambios persistan desde el arranque
+4. Crea `/etc/udev/rules.d/99-huawei-me906s.rules` — fuerza modo MBIM en ModemManager
+5. Espera activamente a que ModemManager detecte el módem (hasta 60s)
+6. Configura el perfil GSM en NetworkManager con `autoconnect: yes`
+7. Guarda el PIN de la SIM si se proporciona (evita el diálogo en cada arranque)
+
+**Uso:**
+
+```bash
+sudo chmod +x huawei-me906s-setup.sh
+
+# Uso básico
+sudo ./huawei-me906s-setup.sh
+
+# Con PIN de SIM (recomendado, evita diálogos al arrancar)
+sudo ./huawei-me906s-setup.sh -p 1234
+
+# Modo verbose (muestra salida de todos los comandos)
+sudo ./huawei-me906s-setup.sh -v -p 1234
+
+# Sin reinicio automático al finalizar (para scripts de automatización)
+sudo ./huawei-me906s-setup.sh -n -p 1234
+```
+
+**Opciones:**
+
+| Opción | Descripción |
+|---|---|
+| `-v` | Modo verbose — muestra salida detallada de cada comando |
+| `-n` | No preguntar sobre reinicio al finalizar |
+| `-p PIN` | PIN de la SIM — se guarda cifrado en el perfil de NetworkManager |
+| `-h` | Muestra la ayuda |
+
+---
+
+### `reiniciar_modem.sh`
+
+Reinicia los servicios `ModemManager` y `NetworkManager`. Útil cuando el módem pierde la conexión sin necesidad de reiniciar el sistema.
+
+**Uso:**
+
+```bash
+sudo chmod +x reiniciar_modem.sh
+
+# Uso básico
+sudo ./reiniciar_modem.sh
+
+# Modo verbose
+sudo ./reiniciar_modem.sh -v
+```
+
+**Opciones:**
+
+| Opción | Descripción |
+|---|---|
+| `-v` | Modo verbose |
+| `-h` | Muestra la ayuda |
+
+---
+
+## Requisitos
+
+- Debian 12 (Bookworm) — también compatible con Ubuntu 22.04+
+- ModemManager 1.20.4 o superior
+- Privilegios `sudo`
+- Tarjeta SIM insertada en el módulo M.2
+
+---
+
+## Comportamiento tras la instalación
+
+Una vez ejecutado `huawei-me906s-setup.sh` y reiniciado el sistema, la secuencia automática en cada arranque es:
+
+```
+Kernel arranca
+    └─ cdc_mbim se carga → /dev/cdc-wdm1 disponible
+         └─ ModemManager detecta el módem via udev (~20s)
+              └─ NetworkManager lee perfil "Vodafone" (autoconnect: yes)
+                   └─ Envía PIN → se registra en red → conexión establecida (~30-40s)
+```
+
+No se requiere ninguna intervención manual. La conexión estará disponible unos 30-40 segundos después del arranque.
+
+---
+
+## Diagnóstico
+
+Si el módem no conecta, estos comandos ayudan a identificar el problema:
+
+```bash
+# ¿El kernel ve el hardware?
+lsusb | grep -i huawei
+
+# ¿Qué driver tiene asignado?
+lsusb -t
+
+# ¿ModemManager lo detecta?
+mmcli -L
+
+# Estado completo del módem
+mmcli -m 0
+
+# ¿El dispositivo MBIM responde?
+mbimcli -d /dev/cdc-wdm1 --query-device-caps
+
+# Logs de ModemManager
+sudo journalctl -u ModemManager -n 50 --no-pager
+```
+
+---
+
+## Hardware probado
+
+| Campo | Valor |
+|---|---|
+| Módulo | Huawei ME906s (`ML1ME906SM`) |
+| USB ID | `12d1:15c1` |
+| Firmware | `11.617.00.00.11` |
+| Redes | GSM / UMTS / LTE (HSPA+) |
+| Operador probado | Vodafone ES |
+| Sistema | Debian 12 Bookworm (kernel 6.x) |
+
+---
+
+## Licencia
+
+MIT
